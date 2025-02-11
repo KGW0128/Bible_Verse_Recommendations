@@ -20,7 +20,7 @@ with open("./data/tfidf_matrix.pkl", "rb") as f:
 
 # 🔹 3. Word2Vec 모델 불러오기
 #   - 단어 간 유사도를 계산하기 위한 모델
-word2vec_model = Word2Vec.load("./models/word2vec_bible.model")
+word2vec_model = Word2Vec.load("./models/word2vec_bible_scale.model")
 
 # 🔹 4. 형태소 분석기 및 불용어 목록 설정
 #   - Okt: 한국어 형태소 분석기 (명사, 동사, 형용사만 추출)
