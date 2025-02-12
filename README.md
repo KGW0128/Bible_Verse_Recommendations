@@ -1,6 +1,6 @@
 
 성경을 학습시켜 기도제목을 적으면 추천 말씀을 주는 AI프로그램(+ui)
-
+TF-IDF와 Word2Vec.model을 결합하여 제작
 
 # 📖 Bible Verse Recommendation App
 
