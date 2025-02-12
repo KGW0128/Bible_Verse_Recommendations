@@ -1,81 +1,195 @@
 
 
+
 #백업용 코드
 
+# tfidf의 .pkl을 사용한 app실행 코드
 
+
+
+import sys
 import pandas as pd
+import pickle
+import numpy as np
+from PyQt5.QtWidgets import QWidget, QApplication, QLabel
+from PyQt5.QtGui import QPixmap
+from PyQt5 import uic
+from sklearn.metrics.pairwise import cosine_similarity
 from konlpy.tag import Okt
 from gensim.models import Word2Vec
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
+from scipy.io import mmread  # 희소 행렬 로드
+import pickle  # 객체 직렬화
 
-# 🔹 1. CSV 데이터 불러오기
-bible_file = "./data/merged_bible (2).csv"  # 성경 데이터 파일
-stopwords_file = "./StopWord/stopwords.csv"  # 불용어 파일
+# ✅ UI 파일 로드
+from_window = uic.loadUiType('./Word_recommendation.ui')[0]
 
-df = pd.read_csv(bible_file)
+# 🔹 BibleApp 클래스 정의
+class BibleApp(QWidget, from_window):
+    def __init__(self):
+        super().__init__()
+        self.setupUi(self)
 
-# 🔹 2. 데이터 전처리 (결측값 제거, 특수문자 제거)
-df.dropna(inplace=True)
-df['content'] = df['content'].astype(str).str.replace(r'[^가-힣\s]', '', regex=True)
+        # 🔹 배경 이미지 설정
+        self.set_background("images/img_2.jpg")
 
-# 🔹 3. 불용어 목록 불러오기
-stopwords_df = pd.read_csv(stopwords_file)
-stopwords = set(stopwords_df['stopword'].tolist())
+        # 🔹 성경 데이터 불러오기
+        self.df = pd.read_csv("./data/processed_bible.csv")
 
-# 🔹 4. 형태소 분석 (명사, 동사, 형용사만 추출, 불용어 제거)
-okt = Okt()
-df['tokenized'] = df['content'].apply(
-    lambda x: [word for word, pos in okt.pos(x, stem=True) if pos in ['Noun', 'Verb', 'Adjective']])
-df['filtered'] = df['tokenized'].apply(lambda x: [word for word in x if word not in stopwords])  # 불용어 제거
-df['processed'] = df['filtered'].apply(lambda x: ' '.join(x))  # 띄어쓰기 결합
-
-# 🔹 5. TF-IDF 벡터화
-vectorizer = TfidfVectorizer()
-tfidf_matrix = vectorizer.fit_transform(df['processed'])
-tfidf_feature_names = vectorizer.get_feature_names_out()
-tfidf_scores = dict(zip(tfidf_feature_names, np.array(tfidf_matrix.sum(axis=0)).flatten()))  # 단어별 중요도 추출
-
-# 🔹 6. Word2Vec 모델 로드 (기존 학습된 모델 사용)
-word2vec_model = Word2Vec.load('./models/word2vec_bible.model')
+        # 🔹 기존 TF-IDF 모델 로드
+        with open("./data/tfidf_vectorizer.pkl", "rb") as f:
+            self.vectorizer = pickle.load(f)
+        with open("./data/tfidf_matrix.pkl", "rb") as f:
+            self.tfidf_matrix = pickle.load(f)
 
 
-# 🔹 7. 기도제목에서 상위 3개 키워드 추출
-def extract_keywords(prayer_text, top_n=5):
-    # 1️⃣ 형태소 분석 후 명사, 동사, 형용사만 추출
-    processed_prayer = [word for word, pos in okt.pos(prayer_text, stem=True) if pos in ['Noun', 'Verb', 'Adjective']]
+        # 🔹 Word2Vec 모델 로드
+        self.word2vec_model = Word2Vec.load("./models/word2vec_bible_scale.model")
 
-    # 2️⃣ TF-IDF 점수가 높은 단어 중 상위 `top_n`개만 선택
-    keyword_candidates = [word for word in processed_prayer if word in tfidf_scores]
-    keyword_candidates = sorted(keyword_candidates, key=lambda w: tfidf_scores.get(w, 0), reverse=True)[:top_n]
+        # 🔹 형태소 분석기 및 불용어 목록
+        self.okt = Okt()
+        stopwords_df = pd.read_csv("./StopWord/stopwords.csv")
+        self.stopwords = set(stopwords_df["stopword"].tolist())
 
-    return keyword_candidates
+        # 🔹 데이터 크기 맞추기
+        self.df = self.df.iloc[:self.tfidf_matrix.shape[0]]
+
+        # 🔹 UI 연결
+        self.btn_recommend.clicked.connect(self.btn_slot)  # 버튼 클릭 시 실행
+        self.le_keyword.returnPressed.connect(self.btn_slot)  # 엔터 키 입력 시 실행
+
+        # 🔹 시작 문자 출력
+        self.lbl_input_phrase.setText("🙏 기도 제목을 적어주세요.")
+
+        # 🔹 QLabel 자동 줄바꿈 설정
+        self.lbl_recommadation.setWordWrap(True)
+
+        # 🔹 버튼 스타일 적용 ✅
+        self.btn_recommend.setStyleSheet("""
+            QPushButton {
+                background-color: #D5D5D5;
+                border: 2px solid #9F9F9F;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 5px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #B1B1B1;
+            }
+            QPushButton:pressed {
+                background-color: #7B7B7B;
+            }
+        """)
+
+        # 🔹 입력창 스타일 적용 ✅
+        self.le_keyword.setStyleSheet("""
+            QLineEdit {
+                background-color: #D5D5D5;
+                border: 2px solid #9F9F9F;
+                font-size: 16px;
+                padding: 8px;
+                border-radius: 8px;
+            }
+        """)
+
+        # 🔹 콤보박스 초기화 ✅
+        self.load_keywords()
+        self.cb_title.currentIndexChanged.connect(self.fill_keyword)
+
+    def load_keywords(self):
+        """ 🔹 'bible_search_keywords.csv'에서 키워드를 로드하여 콤보박스에 추가 """
+        try:
+            keywords_df = pd.read_csv("./data/bible_search_keywords.csv", header=None)
+            keywords = keywords_df[0].dropna().tolist()[1:]  # NaN 값 제거 후 리스트 변환(첫 줄 제외)
+            self.cb_title.addItems([""] + keywords)  # 기본값 추가
+        except Exception as e:
+            print(f"⚠️ 키워드 로드 실패: {e}")
+
+    def fill_keyword(self):
+        """ 🔹 콤보박스에서 선택한 키워드를 입력창에 넣고 자동 검색 실행 """
+        selected_keyword = self.cb_title.currentText()
+        if selected_keyword != "":
+            self.le_keyword.setText(selected_keyword)
+            self.btn_slot()
+
+    def set_background(self, image_path):
+        """ 🔹 QLabel을 이용한 배경 이미지 설정 """
+        self.bg_label = QLabel(self)
+        self.bg_pixmap = QPixmap(image_path)
+        self.bg_label.setScaledContents(True)
+        self.bg_label.lower()
+        self.update_background_size()
+
+    def resizeEvent(self, event):
+        self.update_background_size()
+        super().resizeEvent(event)
+
+    def update_background_size(self):
+        self.bg_label.setGeometry(0, 0, self.width(), self.height())
+        self.bg_label.setPixmap(self.bg_pixmap.scaled(self.width(), self.height()))
+
+    def btn_slot(self):
+        """ 🔹 버튼 클릭 시 실행될 함수 """
+        self.lbl_recommadation.setText("⏳ 말씀을 찾고 있습니다...")
+        QApplication.processEvents()
+
+        prayer_text = self.le_keyword.text().strip()
+        if not prayer_text:
+            self.lbl_recommadation.setText("⚠️ 기도 제목을 입력하세요.")
+            return
+
+        recommendations = self.recommend_verse(prayer_text, top_n=3)
+        self.lbl_recommadation.setText("\n\n".join(recommendations))
+
+    def extract_keywords(self, prayer_text, top_n=5):
+        """ 🔹 키워드 추출 함수 """
+        processed_prayer = [word for word, pos in self.okt.pos(prayer_text, stem=True) if
+                            pos in ["Noun", "Verb", "Adjective"]]
+        filtered_prayer = [word for word in processed_prayer if word not in self.stopwords]
+        keyword_candidates = [word for word in filtered_prayer if word in self.vectorizer.get_feature_names_out()]
+        keyword_candidates = sorted(keyword_candidates,
+                                    key=lambda w: self.tfidf_matrix[:, self.vectorizer.vocabulary_.get(w, 0)].sum(),
+                                    reverse=True)[:top_n]
+        return keyword_candidates
 
 
-# 🔹 8. 말씀 추천 함수 (상위 3개 키워드 기반)
-def recommend_verse(prayer_text):
-    keywords = extract_keywords(prayer_text, top_n=5)
-
-    if not keywords:
-        print("\n⚠️ 키워드를 추출할 수 없습니다. 다시 입력해 주세요.")
-        return
-
-    print("\n🔍 선택된 키워드:", keywords)
-
-    # TF-IDF 유사도 계산
-    query_vector = vectorizer.transform([" ".join(keywords)])
-    cosine_sim = cosine_similarity(query_vector, tfidf_matrix)
-    top_indices = np.argsort(cosine_sim[0])[-3:][::-1]  # 유사도 높은 3개 선택
-
-    print("\n📖 추천 성경 말씀:")
-    for idx in top_indices:
-        print(f"{df.iloc[idx]['book']} {df.iloc[idx]['chapter']}:{df.iloc[idx]['verse']} - {df.iloc[idx]['content']}")
 
 
-# 🔹 9. 사용자 입력을 받아 말씀 추천 실행
-while True:
-    prayer_input = input("\n🙏 기도제목을 입력하세요 (종료하려면 'exit' 입력): ")
-    if prayer_input.lower() == "exit":
-        break
-    recommend_verse(prayer_input)
+    def get_word2vec_similarity(self, keywords, verse_words):
+        """ 🔹 Word2Vec 유사도 계산 """
+        similarities = [self.word2vec_model.wv.similarity(k, w) for k in keywords for w in verse_words
+                        if k in self.word2vec_model.wv and w in self.word2vec_model.wv]
+        return np.mean(similarities) if similarities else 0
+
+
+
+    def recommend_verse(self, prayer_text, top_n=3):
+        """ 🔹 성경 구절 추천 함수 """
+        keywords = self.extract_keywords(prayer_text, top_n=5)
+        if not keywords:
+            return ["⚠️ 키워드를 추출할 수 없습니다. 다시 입력해 주세요."]
+
+        query_vector = self.vectorizer.transform([" ".join(keywords)])
+        cosine_sim = cosine_similarity(query_vector, self.tfidf_matrix)
+
+        self.df["word2vec_sim"] = self.df["processed"].apply(
+            lambda x: self.get_word2vec_similarity(keywords, str(x).split()) if isinstance(x, str) else 0
+        )
+
+        final_scores = (cosine_sim[0] * 0.7) + (self.df["word2vec_sim"].values * 0.3)
+        top_indices = np.argsort(final_scores)[-top_n:][::-1]
+
+        return [
+            f"📖 {self.df.iloc[idx]['book']} {self.df.iloc[idx]['chapter']}:{self.df.iloc[idx]['verse']} - {self.df.iloc[idx]['content']}"
+            for idx in top_indices
+        ]
+
+# 🔹 실행 코드
+def main():
+    app = QApplication(sys.argv)
+    ex = BibleApp()
+    ex.show()
+    sys.exit(app.exec_())
+
+if __name__ == "__main__":
+    main()
