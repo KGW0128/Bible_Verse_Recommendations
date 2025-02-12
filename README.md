@@ -21,7 +21,7 @@
    - `extract_keywords()` 함수에서 **형태소 분석(Okt)**을 사용하여 **명사, 동사, 형용사**만 추출
    - 불용어(stopwords)를 제거
    - 추출된 단어 중 TF-IDF 벡터에 존재하는 단어만 필터링
-   - TF-IDF 점수가 높은 단어들 **(상위 5개 선택)**
+   - TF-IDF 점수가 높은 단어들 **(상위 10개 선택)**
 3. **TF-IDF 코사인 유사도 계산**
    - `vectorizer.transform()`으로 기도 제목을 벡터로 변환
    - `cosine_similarity()`를 사용해 성경 구절 벡터들과 비교
